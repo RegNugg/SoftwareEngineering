@@ -149,9 +149,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 onPressed: () async {
                   final shopsProv = context.read<ShopsProvider>();
                   final queueProv = context.read<QueueProvider>();
-                  await shopsProv.toggleShopStatus(widget.shopId, !shop.isOpen);
-                  if (shopsProv.error != null) _showError(shopsProv.error);
+                  final analyticsProv = context.read<AnalyticsProvider>();
+                  if (shop.isOpen) {
+                    await queueProv.closeQueue(widget.shopId);
+                    if (queueProv.error != null) _showError(queueProv.error);
+                  } else {
+                    await shopsProv.toggleShopStatus(widget.shopId, !shop.isOpen);
+                    if (shopsProv.error != null) _showError(shopsProv.error);
+                  }
+                  await shopsProv.selectShop(widget.shopId);
                   await queueProv.fetchQueue(widget.shopId);
+                  await analyticsProv.fetchAnalytics(widget.shopId);
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: shop.isOpen ? AppTheme.red : AppTheme.orange,
@@ -200,14 +208,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Row(children: [
                         Expanded(
                           child: ElevatedButton(
-                            onPressed: () async { await context.read<QueueProvider>().attend(widget.shopId); },
+                            onPressed: () async {
+                              await context.read<QueueProvider>().attend(widget.shopId);
+                              await context.read<AnalyticsProvider>().fetchAnalytics(widget.shopId);
+                            },
                             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.orange, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                             child: const Text('✓ Done — Next', style: TextStyle(fontWeight: FontWeight.w700)),
                           ),
                         ),
                         const SizedBox(width: 8),
                         OutlinedButton(
-                          onPressed: () async { await context.read<QueueProvider>().skip(widget.shopId, 'owner_skip'); },
+                          onPressed: () async {
+                            await context.read<QueueProvider>().skip(widget.shopId, 'owner_skip');
+                            await context.read<AnalyticsProvider>().fetchAnalytics(widget.shopId);
+                          },
                           style: OutlinedButton.styleFrom(foregroundColor: AppTheme.red, side: const BorderSide(color: AppTheme.red), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                           child: const Text('Skip'),
                         ),
@@ -221,6 +235,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   child: ElevatedButton(
                     onPressed: () async {
                       await context.read<QueueProvider>().callNext(widget.shopId);
+                      await context.read<AnalyticsProvider>().fetchAnalytics(widget.shopId);
                       final q = context.read<QueueProvider>();
                       if (q.error != null) _showError(q.error);
                     },
@@ -237,6 +252,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 isLast: entry == activeQueue.last,
                 onSkip: () async {
                   await context.read<QueueProvider>().skip(widget.shopId, 'owner_skip');
+                  await context.read<AnalyticsProvider>().fetchAnalytics(widget.shopId);
                   final q = context.read<QueueProvider>();
                   if (q.error != null) _showError(q.error);
                 },
@@ -274,8 +290,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
           else if (analytics == null)
             const Center(child: Padding(padding: EdgeInsets.all(32), child: Text('No analytics data available', style: TextStyle(color: AppTheme.gray400))))
           else ...[
-            _buildPeriodSection('Today', analytics.today, AppTheme.blue),
-            const SizedBox(height: 16),
+            if (analytics.today != null) ...[
+              _buildPeriodSection('Today', analytics.today!, AppTheme.blue),
+              const SizedBox(height: 16),
+            ] else
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      const Text('📊', style: TextStyle(fontSize: 28)),
+                      const SizedBox(height: 8),
+                      const Text('Today\'s analytics will be available after closing the queue.', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.w600, color: AppTheme.gray600)),
+                    ],
+                  ),
+                ),
+              ),
             _buildPeriodSection('All Time', analytics.allTime, AppTheme.gray600),
           ],
         ],

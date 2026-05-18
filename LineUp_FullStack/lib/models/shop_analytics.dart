@@ -1,13 +1,13 @@
 class ShopAnalytics {
   final String shopId;
   final String shopName;
-  final AnalyticsPeriod today;
+  final AnalyticsPeriod? today;
   final AnalyticsPeriod allTime;
 
   ShopAnalytics({
     required this.shopId,
     required this.shopName,
-    required this.today,
+    this.today,
     required this.allTime,
   });
 
@@ -15,7 +15,7 @@ class ShopAnalytics {
     return ShopAnalytics(
       shopId: json['shopId'] as String? ?? json['shop_id'] as String? ?? '',
       shopName: json['shopName'] as String? ?? json['shop_name'] as String? ?? '',
-      today: AnalyticsPeriod.fromJson(json['today'] as Map<String, dynamic>),
+      today: json['today'] != null ? AnalyticsPeriod.fromJson(json['today'] as Map<String, dynamic>) : null,
       allTime: AnalyticsPeriod.fromJson(json['allTime'] as Map<String, dynamic>),
     );
   }

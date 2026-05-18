@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const { updateTodayStats } = require('../helpers/stats');
 
 router.get('/:id/queue', (req, res) => {
   const { id } = req.params;
@@ -48,6 +49,7 @@ router.post('/:id/join', (req, res) => {
   db.prepare(
     `INSERT INTO queue_entries (id, shop_id, user_id, position, status) VALUES (?, ?, ?, ?, 'waiting')`
   ).run(entryId, id, userId, nextPosition);
+  updateTodayStats(db, id);
   res.json({ id: entryId, shopId: id, userId, position: nextPosition, status: 'waiting' });
 });
 
@@ -67,6 +69,7 @@ router.post('/:id/leave', (req, res) => {
   const userPosition = entry.position;
   db.prepare(`UPDATE queue_entries SET status = 'cancelled' WHERE shop_id = ? AND user_id = ? AND status = 'waiting'`).run(id, userId);
   db.prepare(`UPDATE queue_entries SET position = position - 1 WHERE shop_id = ? AND position > ? AND status = 'waiting'`).run(id, userPosition);
+  updateTodayStats(db, id);
   res.json({ success: true });
 });
 
@@ -85,6 +88,7 @@ router.post('/:id/call-next', (req, res) => {
   }
 
   db.prepare(`UPDATE queue_entries SET status = 'called', called_at = datetime('now') WHERE id = ?`).run(entry.id);
+  updateTodayStats(db, id);
   res.json({ id: entry.id, shopId: entry.shop_id, userId: entry.user_id, position: entry.position, status: 'called' });
 });
 
@@ -104,6 +108,7 @@ router.post('/:id/attend', (req, res) => {
 
   db.prepare(`UPDATE queue_entries SET status = 'attended' WHERE id = ?`).run(entry.id);
   db.prepare(`UPDATE queue_entries SET position = position - 1 WHERE shop_id = ? AND position > ? AND status IN ('waiting', 'called')`).run(id, entry.position);
+  updateTodayStats(db, id);
   res.json({ id: entry.id, shopId: entry.shop_id, userId: entry.user_id, position: entry.position, status: 'attended' });
 });
 
@@ -128,6 +133,7 @@ router.post('/:id/skip', (req, res) => {
 
   db.prepare(`UPDATE queue_entries SET status = 'skipped', skip_reason = ? WHERE id = ?`).run(reason, entry.id);
   db.prepare(`UPDATE queue_entries SET position = position - 1 WHERE shop_id = ? AND position > ? AND status IN ('waiting', 'called')`).run(id, entry.position);
+  updateTodayStats(db, id);
   res.json({ id: entry.id, shopId: entry.shop_id, userId: entry.user_id, position: entry.position, status: 'skipped', skipReason: reason });
 });
 
@@ -139,44 +145,14 @@ router.post('/:id/close', (req, res) => {
     return res.status(404).json({ error: 'Shop not found' });
   }
 
-  const entries = db.prepare(`SELECT * FROM queue_entries WHERE shop_id = ?`).all(id);
+  db.prepare(`UPDATE queue_entries SET status = 'cancelled' WHERE shop_id = ? AND status = 'waiting'`).run(id);
+  db.prepare(`UPDATE queue_entries SET status = 'skipped', skip_reason = 'owner_skip' WHERE shop_id = ? AND status = 'called'`).run(id);
 
-  const customersServed = entries.filter(e => e.status === 'attended').length;
-  const customersSkipped = entries.filter(e => e.status === 'skipped').length;
-  const noShows = entries.filter(e => e.skip_reason === 'no_show').length;
-  const ownerSkips = entries.filter(e => e.skip_reason === 'owner_skip').length;
-  const cancelled = entries.filter(e => e.status === 'cancelled').length;
-
-  const calledEntries = entries.filter(e => e.called_at && e.joined_at);
-  let avgWaitSeconds = null;
-  if (calledEntries.length > 0) {
-    const totalWait = calledEntries.reduce((sum, e) => {
-      const joined = new Date(e.joined_at).getTime();
-      const called = new Date(e.called_at).getTime();
-      return sum + Math.max(0, (called - joined) / 1000);
-    }, 0);
-    avgWaitSeconds = Math.round(totalWait / calledEntries.length);
-  }
-
-  const waitingWithHours = entries.filter(e => e.joined_at);
-  let peakHour = null;
-  if (waitingWithHours.length > 0) {
-    const hourCounts = {};
-    waitingWithHours.forEach(e => {
-      const h = new Date(e.joined_at).getHours();
-      hourCounts[h] = (hourCounts[h] || 0) + 1;
-    });
-    peakHour = parseInt(Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0][0]);
-  }
-
-  const statsId = `stats-${id}-${Date.now()}`;
-  db.prepare(
-    `INSERT INTO queue_stats (id, shop_id, date, customers_served, customers_skipped, no_shows, skips, cancelled, avg_wait_seconds, peak_hour)
-     VALUES (?, ?, date('now'), ?, ?, ?, ?, ?, ?, ?)`
-  ).run(statsId, id, customersServed, customersSkipped, noShows, ownerSkips, cancelled, avgWaitSeconds, peakHour);
+  updateTodayStats(db, id);
+  db.prepare(`UPDATE queue_stats SET is_finalized = 1 WHERE shop_id = ? AND date = date('now')`).run(id);
 
   db.prepare(`UPDATE shops SET is_open = 0 WHERE id = ?`).run(id);
-  res.json({ success: true, stats: { customersServed, customersSkipped, noShows, ownerSkips, cancelled, avgWaitSeconds, peakHour } });
+  res.json({ success: true });
 });
 
 module.exports = router;
